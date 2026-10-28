@@ -1,0 +1,54 @@
+<!doctype html><meta charset="utf-8">
+<title>コース位置合わせ（開発用）</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>html,body,#m{margin:0;height:100%}</style>
+<div id="m"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// 大会PDFのコース図（地理院地図ベース）を地図に重ねて、PDF座標→緯度経度の変換係数を合わせるための道具。
+// PDF表示座標: X = ページy, Y = ページx（ページは90°回転表示）。単位はPDFの内部単位。
+window.map = L.map('m', { zoomSnap: 0.25 }).setView([31.907, 130.42], 15);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '国土地理院' }).addTo(map);
+
+const X0 = 235.92, X1 = 6854.92, Y0 = 330, Y1 = 4713;
+const STRIP_E = [1426, 2522, 3618, 4713];
+window.geo = { lat0: 31.9345, lng0: 130.3807, sx: 1.238e-5, sy: 1.055e-5 };
+window.toLL = (X, Y) => [geo.lat0 - (Y - Y0) * geo.sy, geo.lng0 + (X - X0) * geo.sx];
+
+let ov = null, lines = L.layerGroup().addTo(map), dataUrl = null, raw = null;
+async function build() {
+  const imgs = await Promise.all([0, 1, 2, 3].map(i => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.src = `strip${i}.jpg`; })));
+  const k = 2.8, c = document.createElement('canvas');
+  c.width = Math.round((X1 - X0) / k); c.height = Math.round((Y1 - Y0) / k);
+  const g = c.getContext('2d');
+  // strip0..3 はPDF内の obj46..49 = /R10,/R7,/R8,/R9。上から R7,R8,R9,R10 の順に並べる
+  const SLOT = [3, 0, 1, 2];
+  imgs.forEach((im, i) => g.drawImage(im, 0, (STRIP_E[SLOT[i]] - 1096 - Y0) / k, c.width, 1096 / k));
+  dataUrl = c.toDataURL('image/jpeg', .85);
+  raw = await (await fetch('pdf-course-raw.json')).json();
+}
+window.draw = (op = .5) => {
+  if (ov) ov.remove();
+  ov = L.imageOverlay(dataUrl, [toLL(X0, Y1), toLL(X1, Y0)], { opacity: op }).addTo(map);
+  lines.clearLayers();
+  for (const p of raw) for (const s of p.subs)
+    L.polyline(s.map(([x, y]) => toLL(y, x)), { color: p.w > 10 ? '#d00' : '#f80', weight: p.w > 10 ? 3 : 2 }).addTo(lines);
+};
+window.ready = build().then(() => draw());
+// pairs: [[PDF側x,y, 地理院側x,y]]（スクリーンショット座標）。before = PDF側を撮った時の geo。等方スケールで合わせ直す
+window.fitIso = (pairs, before, shotW = 636) => {
+  const f = map.getSize().x / shotW, c = Math.cos(31.906 * Math.PI / 180);
+  const pts = pairs.map(([a, b, cc, d]) => {
+    const p = map.containerPointToLatLng([a * f, b * f]), q = map.containerPointToLatLng([cc * f, d * f]);
+    return { X: (p.lng - before.lng0) / before.sx, Y: (before.lat0 - p.lat) / before.sy, u: q.lng * c, v: -q.lat };
+  });
+  const n = pts.length, avg = k => pts.reduce((a, p) => a + p[k], 0) / n;
+  const mX = avg('X'), mY = avg('Y'), mu = avg('u'), mv = avg('v');
+  let num = 0, den = 0;
+  pts.forEach(p => { num += (p.X - mX) * (p.u - mu) + (p.Y - mY) * (p.v - mv); den += (p.X - mX) ** 2 + (p.Y - mY) ** 2; });
+  const s = num / den, U0 = mu - s * mX, V0 = mv - s * mY;
+  Object.assign(geo, { lng0: U0 / c, sx: s / c, lat0: -V0, sy: s });
+  return { geo: { ...geo }, resM: pts.map(p => [Math.round((U0 + s * p.X - p.u) / c * 94500), Math.round((V0 + s * p.Y - p.v) * 110900)]) };
+};
+window.ll =(x, y) => { const p = map.containerPointToLatLng([x, y]); return [+p.lat.toFixed(6), +p.lng.toFixed(6)]; };
+</script>

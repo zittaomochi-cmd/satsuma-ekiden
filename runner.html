@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>タスキ送信機</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap">
+<style>
+  :root { --c: #888; --ink: #fff; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: "Zen Kaku Gothic New", "Hiragino Sans", sans-serif; }
+  body { display: flex; flex-direction: column; min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); gap: 14px; }
+  .team { background: var(--c); color: var(--ink); border-radius: 16px; padding: 16px; text-align: center; border: 2px solid rgba(255,255,255,.4); }
+  .team small { display: block; font-size: .8rem; opacity: .8; }
+  .team b { font-size: 1.8rem; font-weight: 900; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .box { background: #15181d; border-radius: 12px; padding: 12px; }
+  .box small { display: block; color: #9aa1ab; font-size: .72rem; }
+  .box b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+  .ok { color: #4ade80; } .ng { color: #f87171; } .wait { color: #fbbf24; }
+  .big { font-size: 1.25rem; font-weight: 900; padding: 20px; border-radius: 14px; border: 0; background: #e8402f; color: #fff; width: 100%; }
+  .sub { background: #2a3038; font-size: .9rem; padding: 12px; font-weight: 700; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .msg { color: #9aa1ab; font-size: .8rem; line-height: 1.6; margin: 0; }
+  .err { background: #3b1414; color: #fca5a5; border-radius: 12px; padding: 14px; line-height: 1.6; }
+  #lock { position: fixed; inset: 0; background: #000; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 18px; z-index: 9; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #lock.on { display: flex; }
+  #lock .dot { width: 110px; height: 110px; border-radius: 50%; background: var(--c); border: 3px solid rgba(255,255,255,.5); }
+  #lock p { margin: 0; color: #9aa1ab; text-align: center; line-height: 1.7; }
+  #lock b { color: #fff; font-size: 1.1rem; }
+  #hold { position: absolute; bottom: 0; left: 0; height: 6px; background: #e8402f; width: 0; }
+</style>
+</head>
+<body>
+<div id="setupErr" class="err" hidden></div>
+
+<div class="team" id="teamBox"><small>タスキ</small><b id="teamName">---</b></div>
+
+<div class="grid">
+  <div class="box"><small>GPS</small><b id="gps" class="wait">未開始</b></div>
+  <div class="box"><small>送信</small><b id="net" class="wait">未開始</b></div>
+  <div class="box"><small>現在</small><b id="leg">--</b></div>
+  <div class="box"><small>距離</small><b id="km">0.00km</b></div>
+</div>
+
+<button id="startBtn" class="big" type="button">計測をはじめる</button>
+<div class="row">
+  <button id="lockBtn" class="big sub" type="button" hidden>画面ロック</button>
+  <button id="gpxBtn" class="big sub" type="button">GPSログ保存</button>
+</div>
+<p class="msg" id="hint">スタート前にこの画面を開いて「計測をはじめる」を押してください。<br>
+画面は消さずに、ポーチに入れたままにします（自動で画面が消えないようにしています）。</p>
+<button id="resetBtn" class="big sub" type="button">距離をリセット（試走用）</button>
+
+<div id="lock">
+  <div class="dot"></div>
+  <p><b id="lockTeam"></b><br>送信中 <span id="lockInfo"></span><br>解除するには 2秒 長押し</p>
+  <div id="hold"></div>
+</div>
+
+<script type="module" src="js/runner.js"></script>
+</body>
+</html>
