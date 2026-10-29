@@ -1,12 +1,15 @@
 import { COURSE } from './course.js';
 import { CONFIG } from './config.js';
 import { TEAMS } from './teams.js';
-import { TOTAL_KM, RELAY_KM, legAtKm } from './geo.js';
+import { TOTAL_KM, RELAY_KM, legAtKm, kmToM, pointAtM } from './geo.js';
 import { connectLive, startDemo, MARK_KM } from './feed.js';
 
 const $ = id => document.getElementById(id);
 const RACE_START = Date.parse(CONFIG.raceStart);
-const STALE_MS = 60000;
+// 1分おきに送る端末もあるので、3回続けて届かなかったら「途切れ」扱い
+const STALE_MS = 150000;
+// 次のデータが来るまで、直近の速さでコース上を先へ進めて見せる上限
+const AHEAD_MS = 120000;
 
 // ---- 地図 ----
 const map = L.map('map', { zoomControl: true, attributionControl: true });
@@ -74,15 +77,15 @@ function standings(store, now) {
     const track = [...marks.filter(p => p[1] < km), [s.t, km]];
     const finished = km >= TOTAL_KM - 0.005;
     const finishT = finished ? (s.fin ?? s.t) : null;
-    // 直近90秒の速度から次の中継所までの時間を見積もる
-    let eta = null;
-    const back = track.filter(p => p[0] >= s.t - 90000);
+    // 直近3分の速さ（km/ms）。次の中継所までの時間と、地図上の点の動きに使う
+    let v = 0, eta = null;
+    const back = track.filter(p => p[0] >= s.t - 180000);
     if (back.length >= 2) {
       const [t0, k0] = back[0], [t1, k1] = back[back.length - 1];
-      const v = (k1 - k0) / (t1 - t0);
+      if (t1 > t0) v = Math.max(0, (k1 - k0) / (t1 - t0));
       if (v > 0) eta = (RELAY_KM[legAtKm(km) + 1] - km) / v;
     }
-    return { team, s, km, track, finished, finishT, eta, stale: now - s.t > STALE_MS && !finished };
+    return { team, s, km, v, track, finished, finishT, eta, stale: now - s.t > STALE_MS && !finished };
   });
   rows.sort((a, b) => {
     if (a.finished && b.finished) return a.finishT - b.finishT;
@@ -145,19 +148,48 @@ function render(store, now) {
   const curLeg = lead ? COURSE.legs[legAtKm(lead.km)].no : 0;
   document.querySelectorAll('#legTable tr').forEach(tr => tr.classList.toggle('now', +tr.dataset.leg === curLeg));
 
+  lastRows = rows;
   rows.forEach((r, i) => {
     if (r.km < 0 || !r.s) return;
     const t = r.team;
     const html = `<div class="tm ${selected === t.id ? 'sel' : ''} ${r.stale ? 'stale' : ''}" style="background:${t.color};color:${t.ink}">${i + 1}</div>`;
     const icon = L.divIcon({ className: '', html, iconSize: [26, 26], iconAnchor: [13, 13] });
     if (!markers[t.id]) {
-      markers[t.id] = L.marker([r.s.lat, r.s.lng], { icon }).bindTooltip(t.name, { direction: 'top', offset: [0, -14] }).addTo(map);
+      markers[t.id] = L.marker(pointAtM(kmToM(r.km)), { icon }).bindTooltip(t.name, { direction: 'top', offset: [0, -14] }).addTo(map);
       markers[t.id].on('click', () => select(t.id));
     } else {
-      markers[t.id].setLatLng([r.s.lat, r.s.lng]).setIcon(icon);
+      markers[t.id].setIcon(icon);
     }
     markers[t.id].setZIndexOffset(1000 - i * 10 + (selected === t.id ? 500 : 0));
   });
+  moveMarkers(now);
+}
+
+// ---- 点をなめらかに動かす ----
+// 位置が数十秒〜1分おきにしか届かなくても止まって見えないよう、最後の位置から直近の速さで
+// コース線に沿って先へ進める（最大 AHEAD_MS まで）。新しい位置が届いたら、飛ばずに数秒かけて寄せる
+let lastRows = [];
+const shownKm = {};
+let lastFrame = 0;
+function moveMarkers(now) {
+  const frame = performance.now();
+  const ease = lastFrame ? Math.min(1, (frame - lastFrame) / 3000) : 1;
+  lastFrame = frame;
+  for (const r of lastRows) {
+    const m = markers[r.team.id];
+    if (!m || r.km < 0 || !r.s) continue;
+    let target = r.km;
+    if (!r.finished && r.v > 0) target = Math.min(TOTAL_KM, r.km + r.v * Math.min(AHEAD_MS, Math.max(0, now - r.s.t)));
+    const prev = shownKm[r.team.id];
+    // 戻りすぎ・離れすぎ（再読み込みやデモのやり直し）はその場に置き直す
+    // 先へ進めすぎていた分は後ろへ戻さず、実際の位置が追いつくまでその場で待つ
+    let km;
+    if (prev == null || Math.abs(target - prev) > 1) km = target;
+    else if (target < prev && prev - target < 0.3) km = prev;
+    else km = prev + (target - prev) * ease;
+    shownKm[r.team.id] = km;
+    m.setLatLng(pointAtM(kmToM(km)));
+  }
 }
 
 const chip = t => `<span class="chip" style="background:${t.color};color:${t.ink}">${t.tasuki}</span>`;
@@ -185,7 +217,7 @@ if (CONFIG.firebaseUrl && !params.has('demo')) {
     $('status').className = 'pill ' + (st === 'live' ? 'live' : '');
   });
 } else {
-  feed = startDemo(onData, RACE_START);
+  feed = startDemo(onData, RACE_START, (+params.get('every') || 0) * 1000);
   $('status').textContent = 'DEMO';
   $('status').className = 'pill demo';
   $('demoBar').hidden = false;
@@ -195,3 +227,4 @@ if (CONFIG.firebaseUrl && !params.has('demo')) {
   mark();
 }
 setInterval(redraw, 1000);
+setInterval(() => moveMarkers(feed.now()), 200);

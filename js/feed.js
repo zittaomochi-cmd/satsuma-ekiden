@@ -37,7 +37,8 @@ function seeded(seed) {
   return () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
 }
 
-export function startDemo(onData, raceStartMs) {
+// everyMs を渡すと、各チームの位置をその間隔（レース時間）でしか更新しない（1分おきの端末の再現用）
+export function startDemo(onData, raceStartMs, everyMs = 0) {
   const rnd = seeded(20261108);
   // チームごとの各区間タイム（ミリ秒）
   const splits = TEAMS.map((t, ti) => {
@@ -69,17 +70,18 @@ export function startDemo(onData, raceStartMs) {
     return t;
   }
 
+  const teams = {};
   function tick() {
     const t = now();
-    const teams = {};
     TEAMS.forEach((tm, ti) => {
+      if (everyMs && teams[tm.id] && t - teams[tm.id].t < everyMs && !teams[tm.id].fin) return;
       const km = kmAt(ti, t);
       const [lat, lng] = pointAtM(kmToM(km));
       teams[tm.id] = { lat: lat + (rnd() - 0.5) * 6e-5, lng: lng + (rnd() - 0.5) * 6e-5, km, acc: 8, t };
       if (km >= TOTAL_KM) teams[tm.id].fin = Math.round(timeAt(ti, TOTAL_KM));
       for (let i = 1; i <= Math.floor(km / MARK_KM + 1e-9); i++) marks[tm.id][i] ??= Math.round(timeAt(ti, i * MARK_KM) / 1000);
     });
-    onData({ teams, marks });
+    onData({ teams: { ...teams }, marks });
   }
   tick();
   const timer = setInterval(tick, 1000);
@@ -87,7 +89,7 @@ export function startDemo(onData, raceStartMs) {
     now,
     get speed() { return speed; },
     setSpeed(s) { race0 = now(); demoT0 = Date.now(); speed = s; tick(); },
-    restart() { for (const k in marks) marks[k] = {}; race0 = raceStartMs - 60000; demoT0 = Date.now(); tick(); },
+    restart() { for (const k in marks) marks[k] = {}; for (const k in teams) delete teams[k]; race0 = raceStartMs - 60000; demoT0 = Date.now(); tick(); },
     close: () => clearInterval(timer),
   };
 }
